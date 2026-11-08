@@ -1,0 +1,23 @@
+# Optional: .env values override these settings. Never put credentials in Git.
+vacancy_hosts = ["rabota.sber.ru"]
+
+[userbot]
+api_id = 0
+api_hash = ""
+target = "Giga_recruiter_bot"
+
+[codex]
+binary = "codex"
+model = ""
+timeout = 180
+
+[interview]
+max_answers = 30
+# Pause before sending each answer; 0 disables it.
+send_delay = 30
+# Briefly wait for the rating card after the completion message.
+feedback_wait = 2
+# Group a burst of recruiter messages before generating one answer.
+debounce = 0.6
+# Fallback after a missed update; no polling while paused.
+reconciliation_interval = 30

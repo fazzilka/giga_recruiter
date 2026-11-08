@@ -1,0 +1,31 @@
+[project]
+name = "giga-recruiter"
+version = "0.1.0"
+description = "Personal Telegram recruiter assistant using Codex CLI"
+requires-python = ">=3.11"
+dependencies = [
+    "telethon>=1.45,<1.46",
+    "python-dotenv>=1,<2",
+    "httpx>=0.28,<1",
+    "beautifulsoup4>=4.13,<5",
+    "pypdf>=6,<7",
+    "python-docx>=1.2,<2",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "aiosqlite>=0.21,<1",
+    "dishka>=1.9,<2",
+    "pydantic>=2.10,<3",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.14,<1"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
