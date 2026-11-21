@@ -159,6 +159,64 @@ async def test_missing_candidate_fact_pauses(setup):
     assert all(c.args[0] == "me" for c in client.send_message.call_args_list)
 
 
+@pytest.mark.parametrize(
+    "event", ["needs_input", "buttons", "draft", "limit", "failure", "command_failure"]
+)
+async def test_intervention_events_reach_alert_bot(setup, event):
+    import httpx
+
+    from src.config.config import AlertConfig
+    from src.runtime.interview import InterviewScheduler
+    from src.services.alerts import AlertService
+    from src.userbot.handlers.commands import UserbotCommandHandlers
+
+    app, client, _ = setup
+    delivered = []
+
+    def handle(request):
+        import json
+
+        delivered.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 7}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        app.telegram.alerts = AlertService(
+            http, AlertConfig(bot_token="123:fake", chat_id=-100123)
+        )
+        if event == "needs_input":
+            app.model.answer.return_value = {
+                "action": "needs_input",
+                "text": "",
+                "reason": "График?",
+            }
+        elif event == "buttons":
+            client.get_messages.return_value = [message(buttons=[[object()]])]
+        elif event == "limit":
+            app.current["answers"] = app.config.max_answers
+        elif event == "failure":
+            app.model.answer.side_effect = OSError("offline")
+        elif event == "command_failure":
+            app.current["pending"] = "Черновик"
+        if event == "command_failure":
+            await UserbotCommandHandlers(commands(app), app.telegram).handle(
+                SimpleNamespace(raw_text="/resume")
+            )
+        else:
+            await InterviewScheduler(app).step()
+    assert not app.active
+    assert len(delivered) == 1
+    assert delivered[0]["chat_id"] == -100123
+    expected = {
+        "needs_input": "/answer",
+        "buttons": "/handled",
+        "draft": "/send",
+        "limit": "MAX_ANSWERS",
+        "failure": "/status",
+        "command_failure": "/send",
+    }
+    assert expected[event] in delivered[0]["text"]
+
+
 async def test_model_done_cannot_finish_open_question(setup):
     app, client, store = setup
     app.model.answer.return_value = {
@@ -448,6 +506,90 @@ async def test_pause_cancels_thirty_second_wait_without_resuming(setup):
     assert app.current["pending"] == "Ответ"
     assert app.current["phase"] == "interview"
     client.send_message.assert_not_awaited()
+
+
+async def test_manual_answer_resumes_cycle_without_separate_resume(setup):
+    app, client, _ = setup
+    app.pause()
+    app.mode = "auto"
+    result = await commands(app).execute("/answer Мой ответ")
+    assert "цикл продолжен" in result
+    assert app.active
+    assert app.wakeup.is_set()
+    assert app.current["pending"] is None
+    client.get_messages.return_value = [message(), message(11, "Следующий вопрос?")]
+    await app.tick()
+    assert app.current["answers"] == 2
+    assert [
+        c.args[1] for c in client.send_message.call_args_list if c.args[0] == "target"
+    ] == ["Мой ответ", "Интересны задачи с SQL."]
+
+
+async def test_pause_while_manual_answer_is_sending_keeps_cycle_paused(setup):
+    app, client, _ = setup
+    app.pause()
+
+    async def send(target, text, **kwargs):
+        if target == "target":
+            app.pause()
+
+    client.send_message.side_effect = send
+    result = await commands(app).execute("/answer Мой ответ")
+    assert "паузе" in result
+    assert not app.active
+    assert app.current["pending"] is None
+    assert app.current["answers"] == 1
+
+
+@pytest.mark.parametrize("control", ["/resume", "/run"])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_resume_during_manual_answer_waits_without_cancelling_send(
+    setup, monkeypatch, control, cancel
+):
+    from src.userbot.handlers.commands import UserbotCommandHandlers
+
+    app, client, _ = setup
+    app.active = False
+    app.config.send_delay = 30
+    waiting, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed_wait():
+        waiting.set()
+        await release.wait()
+        raise TimeoutError
+
+    monkeypatch.setattr(app._cancel_send, "wait", delayed_wait)
+    handler = UserbotCommandHandlers(commands(app), app.telegram)
+    answer = asyncio.create_task(
+        handler.handle(SimpleNamespace(raw_text="/answer Мой ручной ответ"))
+    )
+    resume = None
+    try:
+        await asyncio.wait_for(waiting.wait(), 1)
+        resume = asyncio.create_task(handler.handle(SimpleNamespace(raw_text=control)))
+        await asyncio.sleep(0)
+        assert not resume.done()
+        assert not app._cancel_send.is_set()
+        if cancel:
+            await handler.handle(SimpleNamespace(raw_text="/pause"))
+        release.set()
+        await asyncio.wait_for(asyncio.gather(answer, resume), 1)
+        sent = [
+            c.args[1]
+            for c in client.send_message.call_args_list
+            if c.args[0] == "target"
+        ]
+        assert sent == ([] if cancel else ["Мой ручной ответ"])
+        assert app.active is not cancel
+        assert app.current["pending"] == ("Мой ручной ответ" if cancel else None)
+        assert app.current["answers"] == (0 if cancel else 1)
+        assert not any(
+            "Ошибка" in c.args[1] or "Ожидает черновик" in c.args[1]
+            for c in client.send_message.call_args_list
+        )
+    finally:
+        release.set()
+        await asyncio.gather(*(t for t in (answer, resume) if t is not None))
 
 
 async def test_new_question_during_delay_prevents_stale_answer(setup):
@@ -853,6 +995,32 @@ async def test_rating_timeout_accepts_confirmation_on_original_card(setup):
     assert restored.current is None
     assert restored.jobs[0]["rating"] == 5
     rating.buttons[-1][0].click.assert_awaited_once()
+
+
+@pytest.mark.parametrize("confirmed", [True, False])
+async def test_resume_reconciles_rating_from_same_card_without_reclicking(
+    setup, confirmed
+):
+    app, client, store = setup
+    app.pause()
+    app.current.update(phase="rating", rating_message_id=12)
+    confirmation = message(12 if confirmed else 13, "Спасибо за обратную связь!")
+    client.get_messages.return_value = confirmation
+    if confirmed:
+        await commands(app).execute("/resume")
+        assert app.active
+        restored = await reload_store(store)
+        assert restored.current["phase"] == "finishing"
+        assert restored.current["rating_done"] is True
+        assert restored.jobs[0]["rating"] == 5
+    else:
+        with pytest.raises(ValueError, match="Предыдущее действие"):
+            await commands(app).execute("/resume")
+        assert not app.active
+        assert app.current["phase"] == "rating"
+        assert not store.jobs[0].get("rating")
+    client.get_messages.assert_awaited_once_with("target", ids=12)
+    client.send_message.assert_not_awaited()
 
 
 async def test_rating_timeout_accepts_delayed_edit_without_clicking_twice(setup):

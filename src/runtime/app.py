@@ -5,12 +5,15 @@ import asyncio
 import os
 import shutil
 
+import httpx
+
 from src.config import Config
 from src.core.logger import setup_logging
 from src.core.telemetry import Telemetry
 from src.runtime.bootstrap import process_lock, run_async_entrypoint
 from src.runtime.containers import make_app_container
 from src.runtime.interview import InterviewScheduler
+from src.services.alerts import AlertService
 from src.services.materials import MaterialService
 from src.userbot.client import create_userbot_client
 from src.userbot.handlers.commands import UserbotCommandHandlers
@@ -27,6 +30,7 @@ async def serve(config: Config, client, telemetry: Telemetry | None = None) -> N
     try:
         telegram = await container.get(TelegramGateway)
         telegram.target = target
+        telegram.owner_id = owner.id
         await (await container.get(UserbotCommandHandlers)).attach(client, owner.id)
         await (await container.get(RecruiterHandlers)).attach(client, target)
         scheduler = await container.get(InterviewScheduler)
@@ -110,7 +114,17 @@ async def main(action: str, config: Config) -> None:
             except asyncio.CancelledError:
                 raise
             except BaseException as exc:
-                telemetry.error("runtime.failed", exc, phase="idle")
+                incident = telemetry.error("runtime.failed", exc, phase="idle")
+                if (
+                    isinstance(exc, Exception)
+                    and config.alerts.bot_token.get_secret_value()
+                    and config.alerts.chat_id
+                ):
+                    async with httpx.AsyncClient(trust_env=False) as http:
+                        await AlertService(http, config.alerts).send(
+                            f"Процесс остановился: {type(exc).__name__}. Ошибка {incident}. "
+                            "Проверь терминал и локальный отчёт /diagnostics; после исправления перезапусти проект."
+                        )
                 raise
     finally:
         loop.set_exception_handler(previous_handler)

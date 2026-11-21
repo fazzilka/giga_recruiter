@@ -41,7 +41,8 @@ class InterviewScheduler:
                 )
             service.pause()
             await service.telegram.notify(
-                f"Telegram просит подождать {exc.seconds} с. Затем /resume."
+                f"Telegram просит подождать {exc.seconds} с. Затем /resume.",
+                attention=True,
             )
         except Exception as exc:
             incident = (
@@ -59,7 +60,8 @@ class InterviewScheduler:
             )
             await service.telegram.notify(
                 f"Остановлено: {type(exc).__name__}. {detail}"
-                + (f" Ошибка {incident}. /diagnostics" if incident else "")
+                + (f" Ошибка {incident}. /diagnostics" if incident else ""),
+                attention=True,
             )
 
     async def run(self) -> None:

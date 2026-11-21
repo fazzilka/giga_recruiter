@@ -11,6 +11,9 @@ class ConsoleHandler(logging.StreamHandler):
 
 
 def setup_logging() -> None:
+    # Bot API credentials are part of request URLs; suppress HTTP wire logging.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     logger = logging.getLogger("recruiter")
     if not logger.handlers:
         handler = ConsoleHandler()

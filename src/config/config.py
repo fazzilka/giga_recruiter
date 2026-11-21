@@ -22,6 +22,12 @@ class CodexConfig(BaseModel):
     timeout: float = Field(default=180, gt=0)
 
 
+class AlertConfig(BaseModel):
+    bot_token: SecretStr = SecretStr("")
+    chat_id: int | None = None
+    topic_id: int | None = Field(default=None, ge=1)
+
+
 class InterviewConfig(BaseModel):
     max_answers: int = Field(default=30, ge=1)
     debounce: float = Field(default=0.6, ge=0)
@@ -35,6 +41,7 @@ class Config(BaseModel):
     root: Path = BASE_DIR
     userbot: UserbotConfig = Field(default_factory=UserbotConfig)
     codex: CodexConfig = Field(default_factory=CodexConfig)
+    alerts: AlertConfig = Field(default_factory=AlertConfig)
     interview: InterviewConfig = Field(default_factory=InterviewConfig)
     vacancy_hosts: set[str] = {"rabota.sber.ru"}
 
@@ -64,6 +71,9 @@ class Config(BaseModel):
             "MESSAGE_DEBOUNCE": ("interview", "debounce"),
             "RECONCILIATION_INTERVAL": ("interview", "reconciliation_interval"),
             "RECRUITER_RESPONSE_TIMEOUT": ("interview", "response_timeout"),
+            "ALERT_BOT_TOKEN": ("alerts", "bot_token"),
+            "ALERT_CHAT_ID": ("alerts", "chat_id"),
+            "ALERT_TOPIC_ID": ("alerts", "topic_id"),
         }
         for key, (section, field) in mapping.items():
             if env.get(key):

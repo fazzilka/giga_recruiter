@@ -10,6 +10,7 @@ from src.core.db.repositories.workflow import WorkflowRepository
 from src.core.telemetry import Telemetry
 from src.integrations.codex import CodexClient
 from src.runtime.interview import InterviewScheduler
+from src.services.alerts import AlertService
 from src.services.feedback import FeedbackService
 from src.services.interview import InterviewService
 from src.services.materials import MaterialService
@@ -86,14 +87,22 @@ class ServicesProvider(Provider):
     scope = Scope.APP
 
     @provide
+    def alerts(self, client: httpx.AsyncClient, config: Config) -> AlertService:
+        return AlertService(client, config.alerts)
+
+    @provide
     def codex(self, config: CodexConfig, telemetry: Telemetry) -> CodexClient:
         return CodexClient(config, telemetry)
 
     @provide
     def telegram(
-        self, client: TelegramClient, config: Config, telemetry: Telemetry
+        self,
+        client: TelegramClient,
+        config: Config,
+        telemetry: Telemetry,
+        alerts: AlertService,
     ) -> TelegramGateway:
-        return TelegramGateway(client, config, telemetry)
+        return TelegramGateway(client, config, telemetry, alerts)
 
     feedback = provide(FeedbackService)
 

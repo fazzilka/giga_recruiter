@@ -1,5 +1,3 @@
-"""Slash command parsing and orchestration, independent of Telegram events."""
-
 import logging
 import shlex
 
@@ -33,6 +31,7 @@ KNOWN_COMMANDS = {
     "/recover",
     "/answer",
     "/send",
+    "/testalert",
 }
 
 
@@ -60,6 +59,10 @@ class ChatCommandService:
             "Command received: %s", command if command in KNOWN_COMMANDS else "unknown"
         )
         interview = self.interview
+        if command == "/testalert" and not args:
+            if await interview.telegram.test_alert():
+                return "Тестовый алерт доставлен."
+            return "Алерт не доставлен. Проверь ALERT_BOT_TOKEN, ALERT_CHAT_ID и ALERT_TOPIC_ID; добавь бота в группу или нажми Start в личном чате. Подробности в терминале."
         if command == "/metrics" and self.telemetry:
             return self.telemetry.summary()
         if command == "/diagnostics" and self.telemetry:
@@ -94,7 +97,13 @@ class ChatCommandService:
                 if j["status"] in statuses
             ) or ("История пуста." if command == "/history" else "Очередь пуста.")
         if command in {"/run", "/resume"}:
-            await interview.resume()
+            epoch = interview.epoch
+            async with interview.busy:
+                if epoch != interview.epoch:
+                    return (
+                        "Продолжение отменено: цикл был остановлен во время ожидания."
+                    )
+                await interview.resume()
             return "Цикл включён."
         if interview.busy.locked():
             return "Обрабатываю вопрос. Для остановки используй /pause; затем повтори команду."
@@ -127,9 +136,14 @@ class ChatCommandService:
                     return "Неначавшийся диалог возвращён в очередь. Открой актуальный список у рекрутера, затем /scan и /run."
                 return "Состояние восстановлено. /send для черновика либо /resume."
             if command == "/answer" and args and args[0]:
+                epoch = interview.epoch
                 if not await interview.answer_manually(args[0]):
                     return "Отправка отменена, черновик сохранён."
-                return "Ответ отправлен. /resume — продолжить цикл."
+                if epoch != interview.epoch:
+                    return "Ответ отправлен. Цикл остаётся на паузе."
+                interview.active = True
+                interview.wake()
+                return "Ответ отправлен, цикл продолжен."
             if command == "/send":
                 if not await interview.send_pending():
                     return "Отправка отменена, черновик сохранён."

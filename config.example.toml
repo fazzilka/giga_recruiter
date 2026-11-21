@@ -11,6 +11,11 @@ binary = "codex"
 model = ""
 timeout = 180
 
+[alerts]
+bot_token = ""
+# chat_id = -1001234567890
+# topic_id = 42
+
 [interview]
 max_answers = 30
 # Pause before sending each answer; 0 disables it.

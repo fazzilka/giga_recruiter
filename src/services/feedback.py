@@ -13,6 +13,16 @@ from src.userbot.utils.messages import fingerprint, supported
 log = logging.getLogger("recruiter.feedback")
 
 
+def rating_confirmed(message, message_id):
+    return (
+        getattr(message, "id", None) == message_id
+        and not message.out
+        and not message.buttons
+        and " ".join((message.raw_text or "").casefold().split()).rstrip("!.")
+        == "спасибо за обратную связь"
+    )
+
+
 def completed(text: str) -> bool:
     text = " ".join((text or "").lower().split())
     return bool(
@@ -82,6 +92,23 @@ class FeedbackService:
     ):
         self.telegram, self.store, self.config = telegram, store, config
 
+    async def reconcile_rating(self):
+        current = self.store.current
+        message_id = current.get("rating_message_id")
+        if message_id is None:
+            return
+        updated = await self.telegram.message(message_id)
+        if not rating_confirmed(updated, message_id):
+            return
+        job = next(job for job in self.store.jobs if job["key"] == current["job"])
+        job["rating"] = 5
+        current.update(rating_done=True, phase="finishing")
+        await self.store.save()
+        log.info(
+            "Rating confirmation recovered from original card; message_id=%d",
+            message_id,
+        )
+
     async def finish(self, messages, still_active) -> bool:
         current = self.store.current
         job = next(job for job in self.store.jobs if job["key"] == current["job"])
@@ -117,15 +144,7 @@ class FeedbackService:
                     if not still_active():
                         return False
                     updated = await self.telegram.message(message.id)
-                    confirmed = (
-                        getattr(updated, "id", None) == message.id
-                        and not updated.out
-                        and not updated.buttons
-                        and " ".join(
-                            (updated.raw_text or "").casefold().split()
-                        ).rstrip("!.")
-                        == "спасибо за обратную связь"
-                    )
+                    confirmed = rating_confirmed(updated, message.id)
                     if confirmed:
                         break
                     if attempt < 2:

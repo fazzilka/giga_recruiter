@@ -106,7 +106,8 @@ class InterviewService:
                 f"Нет доступных карточек для {len(queued)} вакансий. Очередь сохранена. "
                 f"Первая: {first['button']}"
                 + (f" ({first['url']})" if first.get("url") else "")
-                + ". Открой страницу списка с нужной вакансией у рекрутера, затем /scan и /run."
+                + ". Открой страницу списка с нужной вакансией у рекрутера, затем /scan и /run.",
+                attention=True,
             )
             return
         if unavailable:
@@ -272,7 +273,9 @@ class InterviewService:
             return
         if current["answers"] >= self.config.max_answers:
             self.pause()
-            await self.telegram.notify("Достигнут MAX_ANSWERS. Проверь диалог.")
+            await self.telegram.notify(
+                "Достигнут MAX_ANSWERS. Проверь диалог.", attention=True
+            )
             return
         if not incoming:
             now = datetime.now(UTC).timestamp()
@@ -318,13 +321,14 @@ class InterviewService:
             await self.telegram.notify(
                 "Рекрутер прислал кнопки. Выбери ответ в его чате, затем "
                 + ", ".join(f"/handled {m.id}" for m in incoming if m.buttons)
-                + " и /resume."
+                + " и /resume.",
+                attention=True,
             )
             return
         if not any(m.raw_text for m in incoming):
             self.pause()
             await self.telegram.notify(
-                "Нет текстового вопроса. Проверь вложения в чате."
+                "Нет текстового вопроса. Проверь вложения в чате.", attention=True
             )
             return
         job = next(j for j in self.store.jobs if j["key"] == current["job"])
@@ -406,7 +410,8 @@ class InterviewService:
             else:
                 self.pause()
                 await self.telegram.notify(
-                    "Черновик:\n" + current["pending"] + "\n/send или /answer текст"
+                    "Черновик:\n" + current["pending"] + "\n/send или /answer текст",
+                    attention=True,
                 )
         elif action == "needs_input":
             current["blocked_reason"] = result["reason"]
@@ -415,13 +420,18 @@ class InterviewService:
             await self.telegram.notify(
                 "Нужно уточнение: "
                 + result["reason"]
-                + "\n/answer текст, затем /resume"
+                + f"\nВакансия: {job['button']}"
+                + f"\nВопрос рекрутера: {(texts[-1] or '')[:1200]}"
+                + "\n/answer текст — отправить ответ и продолжить цикл.",
+                attention=True,
             )
         else:
             await self.store.save()
 
     async def resume(self) -> None:
         await self.materials.get()
+        if self.current and self.current["phase"] == "rating":
+            await self.feedback.reconcile_rating()
         if self.current is None:
             self._menu_wait = None
             self._visited_pages.clear()

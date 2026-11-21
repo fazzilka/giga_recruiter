@@ -32,7 +32,8 @@ class UserbotCommandHandlers:
                 else f"Ошибка {type(exc).__name__}. Проверь /status."
             )
             await self.telegram.notify(
-                detail + (f" Ошибка {incident}. /diagnostics" if incident else "")
+                detail + (f" Ошибка {incident}. /diagnostics" if incident else ""),
+                attention=True,
             )
 
     async def attach(self, client: TelegramClient, owner_id: int) -> None:
